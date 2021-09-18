@@ -1,0 +1,863 @@
+---
+output: html_document
+---
+<br>
+
+# The Hertie School, GRAD-C6: Statistics II: Statistical Modeling & Causal Inference
+## **Replication Paper: Vote Centers and turnout by election type in Texas.**
+### *Charlotte Kaiser, 194966 | Prof. Simon Muntzert | Spring 2020*
+### May 25th, 2020
+##### *Chosen paper*: Cortina, Jeronimo B. & Brandon Rottinghaus (2019). Vote Centers and turnout by election type in Texas. *Research & Politics* https://doi.org/10.1177/2053168019864224 
+***
+
+
+##### *Abstract of the original study as conducted by Cortina & Rottinghaus*
+*In their research paper Cortina and Rottinghaus examined the effect of vote centers on turnout in three different types of US elections in the state of Texas. The authors postulate the hypothesis that vote centers will increase individual turnout in midterm and presidential elections while assuming that there will be no significant effect in constitutional elections. The authors base their theoretical argument on the assumptions of the rational-choice theory put forth by Anthony Downs and argue that vote centers may lower the costs of voting. Their differentiation between midterm and presidential elections compared to constitutional elections stems from their belief of the voter being a cognitive miser who is more likely to be encouraged by vote centers for elections where awareness and voter activation is more likely a priori and getting information is generally easier (and thus less costly).  To test their hypothesis the authors conduct a natural experiment using a difference-in-difference, fixed-effect model with county-clustered standard errors to compare turnout in counties that have shifted to vote centers to counties where vote centers have not been used for elections. Based on the parallel trend assuptions the DD estimator is a valid method to allow the authors to make statistical assumptions about the difference in counties before and after the implementation of vote centers and thus to test the effectiveness of such a shift. The authors visually investigate whether the parallel trend assumption holds and can confirm the trend. Thus, the DD-estimator as main predictor seems to function adequately. In a later step the authors use propensity score matching to further investigate potential confounding effects that lead to other differences between counties apart from having vote centers. This robustness check makes their empirical strategy even more reliable as it increases the chance of SUTVA and the ignorability assumption to hold. The data for their analysis comes from the Texas Legislative Council, the Texas Secretary of State, the Texas State Demographer and from the US Census. The time period covered is from 2009 to 2018, including annual elections of different types. The authors find that contrary to their hypothesis vote centers have no effect on traditionally higher turnout elections (presidential and midterm). In order to substantiate their findings and to investigate whether the effect is different over time they fit a second DD-model to different time windows using the data on constitutional elections as that data was most abundant in the dataset. They find that the cumulative impact of votecenters in the medium term seems to have a small significant positive effect- presumably as voters have then passed the "acclimation" phase. There is no effect in the short-run. In the long-run turnout returns to levels prior to the policy implemetation. After applying probability weights extracted from the propensity score matching as a robustness check in their third DD-model, the authors conclude that lower turnout elections like constitutional elections benefit more from votecenters than elections where turnout is generally higher. *
+
+***
+```{r, message=FALSE}
+
+#0 Preliminaries 
+ ## Import the necessary packages
+library(dplyr) # for data wrangling
+library(knitr) # to knit the rmd into html
+library(tidyr) # for data cleaning
+library(ggplot2) # for plots
+library(haven)
+library(plm)
+library(kableExtra) 
+library(stargazer) # for table output
+library(MatchIt) # for matching
+options(scipen = 999)
+library(haven)
+library(lmtest)
+library(clubSandwich)
+library(devtools)
+library(tidyverse)
+library(scales) # for ggplot axis formatting
+
+ ##Load the dataset
+rm(list = ls())
+setwd("/Users/charlottekaiser/Desktop/uni/Hertie School/studies/Spring 2020/Stats II/MPP-Replication-Paper/00_source_data")
+data_Texas <- read_dta("Rottinghaus_Cortina_Vote Centers and Turnout by Election Type in Texas_Data.dta")
+data_TexasPA <- read_dta("Rottinghaus_Cortina_Vote Centers and Turnout by Election Type in Texas_Parallel Assumption Data.dta")
+```
+<br>
+
+***
+
+## Analytic Part
+##### In the following I will replicate the tables, figures and findings of the aforementioned paper using R. *Version May 25th, 2020*.
+
+***
+
+### 1. Replication of Table 1. Differential impact of vote center on elections.
+##### 1.1 *Original Model*: Difference-in-difference (DD) fixed- effect model with county-level clustered standard errors (SEs). Used data: panel data on three different type of elections in Texas: presidential elections (data from 2012 to 2016); midterm/gubernatorial elections (2010-2018);constitutional elections (2009-2017).
+
+##### 1.1.1 Method applied: 
+
+* Generate dummies for each election type indicating a year pre or post votecenter implementation (i.e. time discontinuity)
+* Run a regression model with the Diff-in-diff estimator being an interaction term of an indicator variable reflecting the presence of a vote center during a particular election ("votecenter") and an indicator variable of whether the period is before or after the policy is implemented (respective election dummy, "pt", "mt" or "ct")
+* The outcome is turnout ("turnout")
+* The regression conducted is a linear regression including county as a control variable (will be omitted in the output table) - the lm-results were closer to the original estimates (than the plm results)
+* Standard errors are clustered on a county-level (still possible as "county" is included as a covariate) using coeftest()
+* The final table allows for an immediate comparison of the effect of the implementation of votecenters on the different election types 
+
+##### 1.1.1 Equation
+
+$$Y_{it} = β_0 + β_1P_t + β_2D^*_i + β_{DD}D^∗_i × P_t + β_3{covariates} +ε_{it} $$
+
+* i = County
+* t= Year
+* P = Policy, 1 if after implementation (of votecenter)
+* D = Votecenter, 1 if county has a votecenter
+
+
+***
+
+##### 1.2 Code
+
+<br> 
+```{r, results='hide'}
+#1
+ ##1.1 Generate time discontinuity for the three different types of elections (presidential, mid-term, constitutional). Generating dummy variables for all three election types, with a 1 indicating the period is after the policy of votecenter is implemented and a 0 indicating the period is pre-votecenters.
+
+  ###1.1.1 Presidential election (2012=0,2016=1)
+data_pt <- data_Texas %>% 
+  mutate(pt = case_when(year == 2016 ~ 1,
+                        year == 2012 ~ 0))%>% 
+         na.omit() # and omit missings (NAs)
+
+  ###1.1.2 Mid-term election (2010=0,2018=1)
+data_mt <- data_Texas %>% 
+  mutate(mt = case_when(year == 2018 ~ 1,
+                        year == 2010 ~ 0))%>% 
+         na.omit()
+
+  ###1.1.3 Constitutional election (2019=0,2017=1)
+data_ct <- data_Texas %>% 
+  mutate(ct = case_when(year == 2017 ~ 1,
+                        year == 2009 ~ 0))%>% 
+         na.omit()
+
+##1.2 Calculate the differential impact of vote center on turnout for each of the three types of elections
+
+  ###1.2.1 Presidential 
+pres <- lm(turnout ~ votecenter*pt  + votecenter + pt + medianinc_rec + bachelor_higher + totalpop_rec + county , data=data_pt)
+reg_pres_t1 <- coeftest(pres, vcov=vcovHC(pres, type="HC4", cluster= "group")) #cluster standard errors
+
+  ###1.2.2 Midterm
+midterm <- lm(turnout ~ votecenter*mt  +  votecenter + mt + medianinc_rec + bachelor_higher + totalpop_rec + county , data=data_mt)
+reg_midterm_t1 <- coeftest(midterm, vcov=vcovHC(midterm, type="HC4", cluster= "group"))  
+
+  ###1.2.3 Constitutional
+constit <- lm(turnout ~ votecenter*ct  +  votecenter + ct + medianinc_rec + bachelor_higher + totalpop_rec + county , data=data_ct)
+reg_constit_t1 <- coeftest(constit, vcov=vcovHC(constit, type="HC4", cluster= "group"))  
+
+  ##1.3 Output of all three model
+    ###1.3.1 Preliminaries for table design
+vars.order <- c("votecenter", "pt" , "votecenter:pt" , "mt" , "votecenter:mt" , "ct" , "votecenter:ct" , "medianinc_rec" , "bachelor_higher" , "totalpop_rec", "^Constant$") # Adjust order of covariates in stargazer table
+
+vars.label =  c( "Vote center (I=yes/0=no)", "Time(P) (I=2016/0=2012)", "Time(P)*Vote center", "Time(M) (I=2018/0=2010)", "Time(M)*Vote center", "Time(C) (I=2017/0=2009)", "Time(C)*Vote center", "Median income", "Bachelor’s degree or higher", "Total population")  # Adjust labels of covariates
+```
+
+```{r star, results = 'asis', warning=FALSE, message=FALSE}
+library(stargazer, quietly = TRUE)
+  ###1.3.2 Output
+stargazer(reg_pres_t1, reg_midterm_t1, reg_constit_t1, 
+          title="Table I. Differential impact of vote center on elections.", 
+          type = 'html', 
+          out = "table1.html",
+          omit.stat=c("f", "ser"),
+          style = "apsr", 
+          omit=c("county"), 
+          order=paste0("^", vars.order , "$"), 
+          digits=4, notes.align="l",
+          notes.append=FALSE,
+          notes.label="", 
+          column.labels = c("Presidential <br> 2012-2016", "Midterm <br> 2010-2018", "Constitutional <br> 2009-2017"), 
+          model.numbers=FALSE, 
+          add.lines = list (c("Observations", "508", "508", "508"),
+                                                 c("R-Squared", "0.026", "0.820", "0.407"),
+                                                 c("Number of counties", "254", "254", "254")), 
+          covariate.labels =vars.label,
+          notes=c("Standard errors given in parentheses.",
+          "<sup>&sstarf;&sstarf;&sstarf;</sup>p<0.01; <sup>&sstarf;&sstarf;</sup>p<0.05; <sup>&sstarf;</sup>p<0.1.",
+          "Population scaled to 1,000,000 and income scaled to 10,000."),
+          summary.stat=("n"))
+
+```
+
+<br>
+
+*** 
+
+##### 1.3 Results
+
+The authors found that contrary to their hypothesis vote centers have no effect on traditionally higher turnout elections (presidential and midterm). The effect on constitutional elections might be higher but is still marginal and nevertheless statistically insignificant. 
+My replicated estimates yield the same finding. 
+
+***
+
+### 2. Replication of Table 2. Different impact of vote centers.
+##### 2.1 *Original Model*: Difference-in-difference (DD) fixed-effect model with county-level clustered standard errors (SEs) fit to various time windows of constitutional elections. This allows to examine the impact of votecenters on turnout in different time periods and over the short-, medium- and long-term. 
+
+##### 2.1.1 Method applied: 
+
+* Generate dummies for different time windows for constitutional elections only, generate three different dummies for three models
+* Run a regression model with the Diff-in-diff estimator being an interaction term of an indicator variable reflecting the presence of a vote center during a constitutional election and an indicator variable of whether the period is before or after the policy is implemented
+* The outcome is turnout ("turnout")
+* The regression conducted is a linear regression including county as a control variable (will be omitted in the output table) - the lm-results were closer to the original estimates (than the plm results)
+* Standard errors are clustered on a county-level (still possible as "county" is included as a covariate) using coeftest()
+* The final table allows for an immediate comparison of the effect of the implementation of votecenters on turnout in constitutional elections over time periods, it furthermore allows to examine short-, medium- and long-term effects.
+
+
+***
+
+##### 2.2 Code
+
+<br> 
+
+```{r, results='hide'}
+#2 
+ ##2.1 Generate different time windows as dummy variables for the election type "constitutional"
+
+  ###2.1.1 2009 and 2011
+data_ct1 <- data_Texas %>% 
+  mutate(ct1 = case_when(year == 2011 ~ 1,
+                        year == 2009 ~ 0))%>% 
+         na.omit
+
+  ###2.1.2 2011 and 2017
+data_ct2 <- data_Texas %>% 
+  mutate(ct2 = case_when(year == 2017  ~ 1,
+                        year == 2011  ~ 0))%>% 
+         na.omit
+
+  ###2.1.3 2015 and 2017
+data_ct3 <- data_Texas %>% 
+  mutate(ct3 = case_when(year == 2017  ~ 1,
+                         year == 2015  ~0))%>% 
+         na.omit
+
+ ##2.2 Calculate the different impact of vote center on constitutional election turnout for the three different time periods
+
+  ###2.2.1 2009 and 2011
+reg_ct1 <- lm(turnout ~ votecenter*ct1  + votecenter + ct1 + medianinc_rec + bachelor_higher + totalpop_rec + county , data=data_ct1)
+robust_reg_ct1 <- coeftest(reg_ct1, vcov=vcovHC(reg_ct1, type="HC4", cluster= "group"))  
+
+  ###2.2.2 2011 and 2017
+reg_ct2 <- lm(turnout ~ votecenter*ct2  +  votecenter + ct2 + medianinc_rec + bachelor_higher + totalpop_rec + county , data=data_ct2)
+robust_reg_ct2 <- coeftest(reg_ct2, vcov=vcovHC(reg_ct2, type="HC4", cluster= "group"))  
+
+  ###2.2.3 2015 and 2017
+reg_ct3 <- lm(turnout ~ votecenter*ct3  +  votecenter + ct3 + medianinc_rec + bachelor_higher + totalpop_rec + county , data=data_ct3)
+robust_reg_ct3 <- coeftest(reg_ct3, vcov=vcovHC(reg_ct3, type="HC4", cluster= "group"))  
+
+ ##2.3 Output of all three model
+    ###2.3.1 Preliminaries for table design
+vars.order.ct <- c("votecenter", "ct1" , "votecenter:ct1" , "ct2" , "votecenter:ct2" , "ct3" , "votecenter:ct3" , "medianinc_rec" , "bachelor_higher" , "totalpop_rec", "^Constant$") 
+
+vars.label.ct =  c( "Vote center (I=yes/0=no)", 
+                    "Time_{C1} (I=2011/0=2009)",
+                    "Time_{C1}*Vote center", 
+                    "Time_{C2} (I=2017/0=2011)", 
+                    "Time_{C2}*Vote center", 
+                    "Time_{C3} (I=2017/0=2015)",
+                    "Time_{C3}*Vote center", 
+                    "Median income",
+                    "Bachelor’s degree or higher",
+                    "Total population")  
+```
+
+```{r star2, results = 'asis', warning=FALSE, message=FALSE}
+  ###2.3.2 Output
+stargazer(robust_reg_ct1, robust_reg_ct2, robust_reg_ct3,
+          title="Table 2. Different impact of vote center.", 
+          type = 'html', 
+          out = "table2.html",
+          omit.stat=c("f", "ser"),
+          style = "apsr", 
+          omit=c("county"), 
+          order=paste0("^", vars.order.ct , "$"), 
+          digits=4, 
+          notes.align="l", 
+          notes.append=FALSE,
+          notes.label="",  
+          column.labels = c("Constitutional <br> 2009-2011", "Constitutional <br> 2011-2017", "Constitutional <br> 2015-2017"),
+          model.numbers=FALSE, 
+          add.lines = list (c("Observations", "508", "508", "508"),
+                                                 c("R-Sqaured", "0.475", "0.038", "0.478"),
+                                                 c("Number of counties", "254", "254", "254")), 
+          covariate.labels =vars.label.ct, 
+          notes=c("Standard errors given in parentheses.",
+          "<sup>&sstarf;&sstarf;&sstarf;</sup>p<0.01; <sup>&sstarf;&sstarf;</sup>p<0.05; <sup>&sstarf;</sup>p<0.1.",
+          "Population scaled to 1,000,000 and income scaled to 10,000."),
+          summary.stat=("n"))
+
+```
+
+<br>
+
+*** 
+
+##### 2.3 Results
+
+In their second model the authors find that the cumulative impact of votecenters on turnout in constitutional elections seems to have a small positive effect in the medium term - presumably as voters have then passed the "acclimation" phase. There is no effect in the short-run. In the long-run turnout returns to levels prior to the policy implemetation. 
+In the original model the small positive medium term effect is statistically significant. In my replicated results, while the estimate is identical to the original estimate (0.0440), this estimate is however not statistically significant. This is okay and might have resulted from different calculations done by R and Stata. The estimate in the original paper is also only statistically significant at the 90% CI level. Thus, potentially even a minor difference in R and Stata's calculation of the p-value could have pushed my estimate over the edge (and thus the p-value over 0.1) and made it insignificant. 
+
+***
+
+### 3. Replication of Table 3. Robustness check with propensity score matching
+##### 3.1 *Original Model*: The authors applied propensity score matching as a robustness check. Propensity score matching is a possibility for ex post conditioning on potential confounders. It aims to balance the variance in supposed confounders X over treatment and control group. In doing so, confidence can be increased that the effects of the treatment really stem only from the treatment, as this is the only variable that treatment and control group differ in. The propensity score estimates the conditional probability of being assigned to the treatment (i.e. the probability of a county using a votecenter), given a set of observed covariates (here median income, population size and educational level). When then regressing the outcome of interest on the independent variables using the matched datasets covariate values will be balanced except for the values in treatment (votecenter). Thus, this increases the confidence that the ignorability assumption holds (i.e. treatment assignment is effectively random and does not depend on covariate values) and functions as a robustness check.
+
+##### 3.1.1 Method applied: 
+
+* Create subsets datasets for each election where missings (NAs) are omitted
+* Match within the datasets, match on the pre-treatment covariates through regressing votecenter on the other covariates (medianinc_rec + bachelor_higher + totalpop_rec + respective election time-discontinuity variable, so either pt, mt pr ct). Apply nearest neighbor matching method for propensity scores (nearest neighbor = one-on-one matching based on the most similar Propensity Score)
+* Conduct a linear regression for each election type turnout using the matched datasets. This ensures the observations really only differ on their values in the treatment while the covariate values are matched and thus balanced over control and treatment group. 
+
+***
+
+##### 3.2 Code
+
+<br>
+
+```{r}
+#3
+ ##3.1 Conduct Propensity score Matching
+  ###3.1.1 Presidential 
+PT_match <- data_pt %>%   
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, pt) %>% 
+  na.omit() # omit missing values
+
+nearest_model_pt <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec + pt, 
+                     method = "nearest", distance = "logit",
+                     replace = TRUE, 
+                     ratio = 1, 
+                     data = PT_match) # matching dataset with nearest neighbor method on covariates
+
+data_ps_match_pt <- match.data(nearest_model_pt) # extract the matched dataset
+
+reg_PS_pt   <- lm(turnout ~ votecenter*pt + votecenter + pt + medianinc_rec + bachelor_higher + totalpop_rec, data = data_ps_match_pt) # conduct linear regression using the matched dataset
+
+  ###3.1.2 Midterm
+MT_match <- data_mt %>%   
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, mt) %>% 
+  na.omit() 
+
+nearest_model_mt <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec + mt, 
+                     method = "nearest", distance = "logit",
+                     replace = TRUE, 
+                     ratio = 1, 
+                     data = MT_match) 
+
+data_ps_match_mt <- match.data(nearest_model_mt) 
+
+reg_PS_mt  <- lm(turnout ~ votecenter*mt + votecenter + mt + medianinc_rec + bachelor_higher + totalpop_rec, data = data_ps_match_mt) 
+
+  ###3.1.3 Constitutional
+CT_match <- data_ct %>%   
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, ct) %>% 
+  na.omit() 
+
+nearest_model_ct <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec + ct, 
+                     method = "nearest", distance = "logit",
+                     replace = TRUE, 
+                     ratio = 1, 
+                     data = CT_match) 
+
+data_ps_match_ct <- match.data(nearest_model_ct) 
+
+reg_PS_ct  <- lm(turnout ~ votecenter*ct + votecenter + ct + medianinc_rec + bachelor_higher + totalpop_rec, data = data_ps_match_ct) 
+```
+
+```{r star3, results = 'asis', warning=FALSE, message=FALSE}
+ ##3.2 Output of the robustness models
+  ###3.2.1 Preliminaries for table design
+robust.order <- c("votecenter", "pt" , "votecenter:pt" , "mt" , "votecenter:mt" , "ct" , "votecenter:ct" , "medianinc_rec" , "bachelor_higher" , "totalpop_rec", "^Constant$") 
+
+robust.label =  c( "Vote center (I=yes/0=no)",
+                   "Time_{P} (I=2016/0=2012)",
+                   "Time_{P}*Vote center", 
+                   "Time_{M} (I=2018/0=2010)", 
+                   "Time_{M}*Vote center", 
+                   "Time_{C} (I=2017/0=2009)",
+                   "Time_{C}*Vote center", 
+                   "Median income", 
+                   "Bachelor’s degree or higher", 
+                   "Total population") 
+
+  ###3.2.2 Output
+stargazer(reg_PS_pt,reg_PS_mt, reg_PS_ct,
+          title="Table 3. Robustness check with propensity score matching.", 
+          type = 'html', 
+          out = "table3.html",
+          omit.stat=c("f", "ser"),
+          style = "apsr", 
+          order=paste0("^", robust.order , "$"), 
+          digits=4, notes.align="l", 
+          notes.append=FALSE,
+          dep.var.labels ="",
+          notes.label="",  
+          column.labels = c("Presidential", "Midterm", "Constitutional"),
+          model.numbers=FALSE, 
+          covariate.labels =robust.label, 
+          notes=c("Standard errors given in parentheses.",
+          "<sup>&sstarf;&sstarf;&sstarf;</sup>p<0.01; <sup>&sstarf;&sstarf;</sup>p<0.05; <sup>&sstarf;</sup>p<0.1.",
+          "Population scaled to 1,000,000 and income scaled to 10,000."),
+          summary.stat=("n"))
+
+```
+
+<br>
+
+***
+
+##### 3.3 Results
+
+My results are not identical or very similar to that of the original model. This stems from the fact that the authors applied propensity score matching and then extracted probability weights from this proces as well as adjusted the covariates. I, on the other hand, conducted "only" a nearest-neighbor propensity score matching and then used the balanced matched datasets to conduct a linear regression, regressing turnout for each election on the independent variables. 
+The main finding in table 3 put forth by the authors is that "there is no statistically significant effect of vote centers on turnout in presidential or midterm, but there is a small effect in constitutional elections (about 4 % increase), which is on the edge of being statistically insignificant." Whilst my table does not mirror theirs, this key finding replicates in my table. In my estimation, votecenters also only play a meaningful role for constitutional elections while having only marginal and statistically insignificant effects on the other two election types. In my estimation constitutional election turnout ison avergae 10 percentage points higher in counties after they have implemented votecenters than before. However, while the estimate of Cortina and Rottinghaus is "on the edge of" statistical insignificance my estimate is significant at the 99% CI level. 
+Nevertheless, even if the tables differ in the accuracy of estimates and the aforementioned estimate is 0.06 units higher in my model (and statistically more significant) the overall trend is confirmed and replicates the one found in the original study. As Cortina and Rottinghaus have applied weights and additional covariate adjustment and thus "went even further" their estimate is most likely to be more robust. 
+
+***
+
+### 4. Graph to examine the parallel trend assumption.
+##### 4.1 *Original Model*: Graph to visually investigate whether the parallel trend assumption holds. This investigation seeks to answer the question whether there is variation in the trend of turnout in counties that adopted vote centers compared to those that did not adopt vote centers. The DD estimator compares counties before and after the implementation of vote centers by estimating the difference between the observed mean turnout for counties with vote centers and counties with no vote centers before and after a particular implementation year. In order for these results to be valid the parallel trend assumption needs to hold. If the graph shows that the turnouts for the various election types differ in time between counties with and without vote center this would imply that there is some unobserved time-variant confounding. Instead, when the lines flow parallely, this yields confidence to the assumption that only the treatment drives changes in one group but not the other.
+
+##### 4.1.1 Method applied: 
+
+* Create new data_frame where variables are grouped by the main predicting variable (interaction variable of votecenter as policy and time-discontinutity variable for each election type)
+* Plot the trends to visually inspect whether the trend of turnout (in the three elections) between counties that adopted vote centers and those that did not flows parallel
+* Plot the trends for the three elections as seperate lines
+
+***
+
+##### 4.2 Code
+
+<br>
+```{r}
+#4
+ #4.1 Create new data_frame where variables are grouped by the main predicting variable (interaction variable of votecenter as policy and time-discontinutity variable for each election type)
+pta <- data_Texas %>% group_by(year, votecenter, election) %>% 
+  summarise(turnout = mean(turnout)) 
+
+ #4.2 Plot the trends as a visual inspection of turnout between counties that adopted vote centers versus those that did not
+pta_graph <- ggplot(pta, aes(x=year, y=turnout, color=election, group=interaction(election, votecenter)))+
+  geom_line(aes(col=interaction(election, votecenter)))+
+  theme_minimal() + 
+  theme(legend.position="top", legend.text= element_text(size=8)) +
+  labs(title = "Graph I. Parallel trend assumptions",
+        x = "Year",
+        y = "Turnout", caption="Authors own calculation.") +
+  scale_color_discrete(name="Election Type", labels= c("Constitutional in Non-votecenter Counties","Midterm in Non-votecenter Counties","Presidential in Non-votecenter Counties", "Constitutional in Votecenter Counties","Midterm in Votecenter Counties","Presidential in Votecenter Counties"))
+
+pta_graph + guides(col = guide_legend(byrow=TRUE, nrow=3)) + scale_y_continuous(labels=percent) +   coord_cartesian(ylim=c(0, 0.7))
+
+
+```
+
+<br> 
+
+***
+
+##### 4.3 Results
+
+As it shows the parallel trend assumption holds for all three types of elections. Potential unobserved confounding is thus time-invariant and additive and poses no problem to the application of a diff-in-diff model. 
+
+***
+
+### 5. Additional investigation as proposed by the author herself
+
+
+
+##### 5.1 Theoretical framework
+
+*As an additional investigation I propose an exploratory investigation into the relevance of diversity for the postulated mechanism as put forth in the original paper. I want to do so through including diversity within a second propensity score matching process. I will then use the newly matched dataset to replicate table 3 once more and to compare the results. This allows me to check the relevance as well as conduct another robustness check for the original outcomes.*
+
+Inspired by the article "Texas closes hundreds of polling sites, making it harder for minorities to vote" written by Richard Salame and published in The Guardian on March 2nd 2020, I postulate a county's share of Black, Afro American and Latin American citizens to be relevant for the effectiveness of vote centers. The article states that polling stations in Texas are being closed and that "the closures could exacerbate Texas’s already chronically low voter turnout rates, to the advantage of incumbent Republicans. Ongoing research by University of Houston political scientists Jeronimo Cortina and Brandon Rottinghaus indicates that people are less likely to vote if they have to travel farther to do so, and the effect is disproportionately greater for some groups of voters, such as Latinxs." (Salame, 2020) The article focuses mainly on the closing of polling stations alone, however, introduces vote centers as one of the policies that resulted in more closures of polling stations. That is, at Salame states because any "county that transitions to vote centers [is free] to operate with half as many locations as they would otherwise have needed under a traditional precinct-based system." 
+The article further argues that the closing of poll sites happened vastly in the places where the Black and Latinx population is growing by the largest numbers. I connect this fact to the assumption that the effect of distance to voting station on voting likelihood is stronger for certain voter groups ("such as Latinxs"). I thus assume that the effect of vote centers on turnout shall be different for voter groups (as votecenters often entail the closing of other polling sites and may thus envoke longer travelling distances).
+
+Inspired by this research I aim to include a variable on diversity in the counties. I used data provided by U.S. Census Bureau which provided County Population Estimates by Age, Sex, Race and Hispanic Origin in a time period from April 1, 2010 to July 1, 2018. The dataset included the average percentage of Black or African American citizens per county over the time in Texas. While, unfortunately, the share of Latin Americans is not included, the data suffices for my exploratory investigation into the relevance of the variable diversity as hinted towards in the Guardian article. 
+
+
+##### 5.2 Method applied: Propensity score matching, including the % of black or african american as an additional covariate and potential confounder
+
+* First, I included the new variable "perc_black" in the original dataset "data_Texas". The variable is a continuous variable, indicating the percentage of black or african american alone in each of the counties. The data was retrieved from the aforementioned dataset provided by the US. Census Bureau.
+* I then prepare the datasets I will use for matching and conduct the propensity score matching for all three election types in the same way as explained in 3.1.1, now including perc_black as an additional covariate and potential confounder X
+* I can now compare the final table with table 3 and examine how additional matching on "perc_black" has changed (or not affected) the estimates 
+
+***
+
+##### 5.3 Code
+
+<br>
+
+```{r, results='hide'}
+
+#5 
+ #5.1 Add variable that indicates the percentage of black or african american alone in the counties (data retrieved from the U.S. Census Bureau and estimated as an average from April 1, 2010 to July 1, 2018)
+
+data_Texas_expl <- data_Texas %>% 
+  mutate(perc_black = case_when(county == "Anderson"  ~ 21.75,
+                        county == "Andrews"  ~ 1.89,
+                        county == "Angelina"  ~ 15.49,
+                        county == "Aransas"  ~ 1.71,
+                        county == "Archer"  ~ 1.16,
+                        county == "Armstrong"  ~ 1.11,
+                        county == "Atascosa"  ~  1.26,
+                        county == "Austin"  ~  9.31,
+                        county == "Bailey"  ~  2.18,
+                        county == "Bandera"  ~  1.05,
+                        county == "Bastrop"  ~  7.38,
+                        county == "Baylor"  ~  3.02,
+                        county == "Bee"  ~ 8.95,
+                        county == "Bell"  ~24.36,
+                        county == "Bexar"  ~  8.54,
+                        county == "Blanco"  ~  1.64,
+                        county == "Borden"  ~  0.93,
+                        county == "Bosque"  ~  2.14,
+                        county == "Bowie"  ~  25.38,
+                        county == "Brazoria"  ~  14.69,
+                        county == "Brazos"  ~  11.00,
+                        county == "Brewster"  ~  1.62,
+                        county == "Briscoe"  ~  3.56,
+                        county == "Brooks"  ~  0.97,
+                        county == "Brown"  ~  4.07,
+                        county == "Burleson"  ~  12.90,
+                        county == "Burnet"  ~  2.11,
+                        county == "Caldwell"  ~  6.54,
+                        county == "Calhoun"  ~  3.18,
+                        county == "Callahan"  ~  1.66,
+                        county == "Cameron"  ~ 0.83,
+                        county == "Camp"  ~  16.67,
+                        county == "Carson"  ~  0.88,
+                        county == "Cass"  ~  16.88,
+                        county == "Castro"  ~  2.71,
+                        county == "Chambers"  ~  8.51,
+                        county == "Cherokee"  ~  14.58,
+                        county == "Childress"  ~  10.86,
+                        county == "Clay"  ~  0.95,
+                        county == "Cochran"  ~  4.34,
+                        county == "Coke"  ~  0.89,
+                        county == "Coleman"  ~  3.24,
+                        county == "Collin"  ~  10.54,
+                        county == "Collingsworth"  ~  6.14,
+                        county == "Colorado"  ~  12.79,
+                        county == "Comal"  ~  1.08,
+                        county == "Comanche"  ~  2.85,
+                        county == "Concho"  ~  3.40,
+                        county == "Cooke"  ~ 	3.40,
+                        county == "Coryell"  ~ 	17.71,
+                        county == "Cottle"  ~ 	10.94,
+                        county == "Crane"  ~ 	3.65,
+                        county == "Crockett"  ~ 	1.63,
+                        county == "Crosby"  ~ 	3.89,
+                        county == "Culberson"  ~	1.04,
+                        county == "Dallam"  ~	2.39,  
+                        county == "Dallas"  ~	23.48,
+                        county == "Dawson"  ~	6.09,
+                        county == "Deaf Smith"  ~ 2.03,
+                        county == "Delta"  ~	6.69,
+                        county == "Denton"  ~	10.60,
+                        county == "DeWitt"  ~	9.48,
+                        county == "Dickens"  ~	5.87,
+                        county == "Dimmit"  ~	1.57,
+                        county == "Donley"  ~	5.88,
+                        county == "Duval"  ~	1.54,
+                        county == "Eastland"  ~	2.13,
+                        county == "Ector"  ~	5.23,
+                        county == "Edwards"  ~	1.09,
+                        county == "Ellis"  ~	11.39,
+                        county == "El Paso"  ~	3.95,
+                        county == "Erath"  ~	1.97,
+                        county == "Falls"  ~	24.23,
+                        county == "Fannin"  ~	6.6,
+                        county == "Fayette"  ~	6.63,
+                        county == "Fisher"  ~	4.1,
+                        county == "Floyd"  ~	4.06,
+                        county == "Foard"  ~	4.83,
+                        county == "Fort Bend"  ~	21.13,
+                        county == "Franklin"  ~	3.96,
+                        county == "Freestone"  ~	15.81,
+                        county == "Frio"  ~	3.89,
+                        county == "Gaines"  ~	2.24, 
+                        county == "Galveston"  ~ 	13.32,
+                        county == "Garza"  ~ 	7.56,
+                        county == "Gillespie"  ~ 	0.69,
+                        county == "Glasscock"  ~ 	1.59,
+                        county == "Goliad"  ~ 	5.26,
+                        county == "Gonzales"  ~ 	7.34,
+                        county == "Gray"  ~ 	5.16,
+                        county == "Grayson"  ~ 	6.28,
+                        county == "Gregg"  ~ 	20.90,
+                        county == "Grimes"  ~ 	15.60,
+                        county == "Guadalupe"  ~ 	8.59,
+                        county == "Hale"  ~ 	5.84,
+                        county == "Hall"  ~ 	9.21,
+                        county == "Hamilton"  ~ 	0.97,
+                        county == "Hansford"  ~ 	0.95,
+                        county == "Hardeman"  ~ 	5.94,
+                        county == "Hardin"  ~ 	5.63,
+                        county == "Harris"  ~ 	19.87,
+                        county == "Harrison"  ~ 	21.12,
+                        county == "Hartley"  ~ 	6.99,
+                        county == "Haskell"  ~ 	4.75,
+                        county == "Hays"  ~ 	4.42,
+                        county == "Hemphill"  ~ 	0.78,
+                        county == "Henderson"  ~ 	6.44,
+                        county == "Hidalgo"  ~ 	0.87,
+                        county == "Hill"  ~ 	6.80,
+                        county == "Hockley"  ~ 	4.05,
+                        county == "Hood"  ~ 	1.10,
+                        county == "Hopkins"  ~ 	7.39,
+                        county == "Houston"  ~ 	25.50,
+                        county == "Howard"  ~ 	7.19,
+                        county == "Hudspeth"  ~ 	3.59,
+                        county == "Hunt"  ~ 	8.29,
+                        county == "Hutchinson"  ~ 	2.99,
+                        county == "Irion"  ~ 	1.25,
+                        county == "Jack"  ~ 	3.99,
+                        county == "Jackson"  ~ 	6.55,
+                        county == "Jasper"  ~ 	16.07,
+                        county == "Jeff Davis"  ~ 	1.42,
+                        county == "Jefferson"  ~ 	34.12,
+                        county == "Jim Hogg"  ~ 	0.82,
+                        county == "Jim Wells"  ~ 	1.08,
+                        county == "Johnson"  ~ 	3.82,
+                        county == "Jones"  ~ 	13.32,
+                        county == "Karnes"  ~ 	9.30,
+                        county == "Kaufman"  ~ 	12.53,
+                        county == "Kendall"  ~ 	1.40,
+                        county == "Kenedy"  ~ 	3.85,
+                        county == "Kent"  ~ 	1.52,
+                        county == "Kerr"  ~ 	1.94,
+                        county == "Kimble"  ~ 	0.69,
+                        county == "King"  ~ 	0.00,
+                        county == "Kinney"  ~ 	2.10,
+                        county == "Kleberg"  ~ 	4.16,
+                        county == "Knox"  ~ 	6.16,
+                        county == "Lamar"  ~ 	13.44,
+                        county == "Lamb"  ~ 	4.57,
+                        county == "Lampasas"  ~ 	4.13,
+                        county == "La Salle"  ~ 	1.29,
+                        county == "Lavaca"  ~ 	6.59,
+                        county == "Leon"  ~ 	7.22,
+                        county == "Liberty"  ~ 	9.98,
+                        county == "Limestone"  ~ 	17.42,
+                        county == "Lipscomb"  ~ 	1.88,
+                        county == "Live Oak"  ~ 	4.77,
+                        county == "Llano"  ~ 	1.22,
+                        county == "Loving"  ~ 	4.61,
+                        county == "Lubbock"  ~ 	7.83,
+                        county == "Lynn"  ~ 	2.77,
+                        county == "McCulloch"  ~ 	2.73,
+                        county == "McLennan"  ~ 	14.93,
+                        county == "McMullen"  ~ 	2.67,
+                        county == "Madison	"  ~ 20.03,
+                        county == "Marion"  ~ 	21.34,
+                        county == "Martin"  ~ 	2.99,
+                        county == "Mason"  ~ 	0.91,
+                        county == "Matagorda"  ~ 	11.32,
+                        county == "Maverick"  ~ 	0.65,
+                        county == "Medina"  ~ 	3.01,
+                        county == "Menard"  ~ 	1.64,
+                        county == "Midland"  ~ 	6.75,
+                        county == "Milam"  ~ 	9.64,
+                        county == "Mills"  ~ 	1.14,
+                        county == "Mitchell"  ~ 	10.53,
+                        county == "Montague"  ~ 	0.72,
+                        county == "Montgomery"  ~ 	5.61,
+                        county == "Moore"  ~ 	3.91,
+                        county == "Morris"  ~ 	22.73,
+                        county == "Motley"  ~ 	2.92,
+                        county == "Nacogdoches"  ~ 	18.30,
+                        county == "Navarro"  ~ 	13.51,
+                        county == "Newton"  ~ 	20.30,
+                        county == "Nolan"  ~ 	5.15,
+                        county == "Nueces"  ~ 	4.30,
+                        county == "Ochiltree"  ~ 	1.19,
+                        county == "Oldham"  ~ 	3.43,
+                        county == "Orange"  ~ 	8.77,
+                        county == "Palo Pinto"  ~ 	2.59,
+                        county == "Panola"  ~ 	15.94,
+                        county == "Parker"  ~ 	1.59,
+                        county == "Parmer"  ~ 	1.74,
+                        county == "Pecos	"  ~ 4.56,
+                        county == "Polk"  ~ 10.22,
+                        county == "Potter"  ~ 	11.03,
+                        county == "Presidio"  ~ 	1.51,
+                        county == "Rains"  ~ 	2.60,
+                        county == "Randall"  ~ 	3.54,
+                        county == "Reagan"  ~ 	3.31,
+                        county == "Real"  ~ 	1.06,
+                        county == "Red River"  ~ 	16.79,
+                        county == "Reeves"  ~ 	5.24,
+                        county == "Refugio"  ~ 	6.40,
+                        county == "Roberts"  ~ 	0.44,
+                        county == "Robertson"  ~ 	20.27,
+                        county == "Rockwall"  ~ 	6.81,
+                        county == "Runnels"  ~ 	2.41,
+                        county == "Rusk	"  ~ 17.58,
+                        county == "Sabine"  ~ 	6.91,
+                        county == "San Augustine	"  ~ 21.99,
+                        county == "San Jacinto	"  ~ 9.73,
+                        county == "San Patricio"  ~ 	2.01,
+                        county == "San Saba	"  ~ 3.96,
+                        county == "Schleicher"  ~ 	1.76,
+                        county == "Scurry"  ~ 	5.38,
+                        county == "Shackelford	"  ~ 1.78,
+                        county == "Shelby"  ~ 	17.81,
+                        county == "Sherman"  ~ 	1.75,
+                        county == "Smith"  ~ 	17.79,
+                        county == "Somervell"  ~ 	1.30,
+                        county == "Starr"  ~ 	0.39,
+                        county == "Stephens"  ~ 	2.81,
+                        county == "Sterling"  ~ 	2.14,
+                        county == "Stonewall	"  ~ 3.74,
+                        county == "Sutton"  ~ 	1.01,
+                        county == "Swisher"  ~ 	8.44,
+                        county == "Tarrant"  ~ 	17.55,
+                        county == "Taylor"  ~ 	8.26,
+                        county == "Terrell	"  ~ 1.46,
+                        county == "Terry	"  ~ 4.88,
+                        county == "Throckmorton"  ~ 	1.25,
+                        county == "Titus"  ~ 	9.95,
+                        county == "Tom Green	"  ~ 4.38,
+                        county == "Travis"  ~ 	8.86,
+                        county == "Trinity	"  ~ 9.35,
+                        county == "Tyler"  ~ 	11.37,
+                        county == "Upshur"  ~ 	8.01,
+                        county == "Upton"  ~ 	3.35,
+                        county == "Uvalde"  ~ 	1.25,
+                        county == "Val Verde"  ~ 	2.06,
+                        county == "Van Zandt"  ~ 	2.87,
+                        county == "Victoria"  ~ 	6.55,
+                        county == "Walker"  ~ 	23.38,
+                        county == "Waller"  ~ 	24.42,
+                        county == "Ward"  ~ 	5.03,
+                        county == "Washington"  ~ 	17.35,
+                        county == "Webb"  ~ 	0.70,
+                        county == "Wharton"  ~ 	13.81,
+                        county == "Wheeler"  ~ 	3.20,
+                        county == "Wichita	"  ~ 11.26,
+                        county == "Wilbarger	"  ~ 8.20,
+                        county == "Willacy	"  ~ 2.74,
+                        county == "Williamson"  ~ 	7.22,
+                        county == "Wilson"  ~ 	1.77,
+                        county == "Winkler	"  ~ 3.34,
+                        county == "Wise"  ~ 	1.56,
+                        county == "Wood"  ~ 	5.52,
+                        county == "Yoakum"  ~ 	1.48,
+                        county == "Young	"  ~ 1.57,
+                        county == "Zapata"  ~ 	0.42,
+                        county == "Zavala"  ~ 	1.32))%>% 
+         na.omit
+
+
+ ##5.2 Prepare datasets
+  ###5.2.1 Time discontinuity: Presidential (2012=0, 2016=1) - prepare new dataset
+data_pt_expl <-data_Texas_expl %>%
+  mutate(pt_expl = case_when(year == 2016 ~ 1,
+                        year == 2012 ~ 0)) 
+
+  ###5.2.2 Time discontinuity: Midterms elections (2010=0,2018=1) - prepare new dataset
+data_mt_expl<-data_Texas_expl %>%
+  mutate(mt_expl = case_when(year == 2018 ~ 1,
+                        year == 2010 ~ 0))
+
+  ###5.2.3 Time discontinuity: Constitutional elections (2009=0,2017=1) - prepare new dataset
+data_ct_expl <-data_Texas_expl %>%
+  mutate(ct_expl = case_when(year == 2017 ~ 1,
+                        year == 2009 ~ 0))
+
+ ##5.3 Repeat Propensity score matching, including perc_black
+   ###5.3.1 Presidential
+PT_match_expl <- data_pt_expl %>%   
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, pt_expl, perc_black) %>% 
+  na.omit() #omitting missing values
+
+nearest_model_pt_expl <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec + pt_expl + perc_black, 
+                     method = "nearest", distance = "logit",
+                     replace = TRUE, 
+                     ratio = 1, 
+                     data = PT_match_expl) # matching dataset with nearest neighbor method on covariates
+
+data_ps_match_pt_expl <- match.data(nearest_model_pt_expl) # extract the matched dataset
+
+reg_PS_pt_expl   <- lm(turnout ~ votecenter*pt_expl + votecenter + pt_expl + medianinc_rec + bachelor_higher + totalpop_rec + perc_black, data = data_ps_match_pt_expl) # conduct linear regression using the matched dataset
+
+  ###5.3.2 Midterm
+MT_match_expl <- data_mt_expl %>%   
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, mt_expl, perc_black) %>% 
+  na.omit() #omitting missing values
+
+nearest_model_mt_expl <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec + mt_expl + perc_black, 
+                     method = "nearest", distance = "logit",
+                     replace = TRUE, 
+                     ratio = 1, 
+                     data = MT_match_expl) 
+
+data_ps_match_mt_expl <- match.data(nearest_model_mt_expl) 
+
+reg_PS_mt_expl  <- lm(turnout ~ votecenter*mt_expl + votecenter + mt_expl + medianinc_rec + bachelor_higher + totalpop_rec + perc_black, data = data_ps_match_mt_expl) 
+
+  ###5.3.3 Constitutional
+CT_match_expl <- data_ct_expl %>%   
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, ct_expl, perc_black) %>% 
+  na.omit() #omitting missing values
+
+nearest_model_ct_expl <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec + ct_expl + perc_black, 
+                     method = "nearest", distance = "logit",
+                     replace = TRUE, 
+                     ratio = 1, 
+                     data = CT_match_expl) 
+
+data_ps_match_ct_expl <- match.data(nearest_model_ct_expl) 
+
+reg_PS_ct_expl  <- lm(turnout ~ votecenter*ct_expl + votecenter + ct_expl + medianinc_rec + bachelor_higher + totalpop_rec + perc_black, data = data_ps_match_ct_expl) 
+```
+
+```{r star5, results = 'asis', warning=FALSE, message=FALSE}
+ ##5.4 Output of the robustness models
+  ###5.4.1 Preliminaries for table design
+robust.order <- c("votecenter", "pt_expl" , "votecenter:pt_expl" , "mt_expl" , "votecenter:mt_expl" , "ct_expl" , "votecenter:ct_expl" , "medianinc_rec" , "bachelor_higher" , "totalpop_rec", "perc_black", "^Constant$") 
+
+robust.label =  c( "Vote center (I=yes/0=no)",
+                   "Time_{P} (I=2016/0=2012)",
+                   "Time_{P}*Vote center", 
+                   "Time_{M} (I=2018/0=2010)", 
+                   "Time_{M}*Vote center", 
+                   "Time_{C} (I=2017/0=2009)",
+                   "Time_{C}*Vote center", 
+                   "Median income", 
+                   "Bachelor’s degree or higher", 
+                   "Total population",
+                   "% of black or african american") 
+
+  ###5.4.2 Output
+stargazer(reg_PS_pt_expl,reg_PS_mt_expl, reg_PS_ct_expl,
+          title="Table 4. Robustness check with propensity score matching including additional variable.", 
+          type = 'html', 
+          out = "table4.html",
+          omit.stat=c("f", "ser"),
+          style = "apsr", 
+          order=paste0("^", robust.order , "$"), 
+          digits=4, notes.align="l", 
+          notes.append=FALSE,
+          dep.var.labels ="",
+          notes.label="",  
+          column.labels = c("Presidential", "Midterm", "Constitutional"),
+          model.numbers=FALSE, 
+          covariate.labels =robust.label, 
+          notes=c("Standard errors given in parentheses.",
+          "<sup>&sstarf;&sstarf;&sstarf;</sup>p<0.01; <sup>&sstarf;&sstarf;</sup>p<0.05; <sup>&sstarf;</sup>p<0.1.",
+          "Population scaled to 1,000,000 and income scaled to 10,000."),
+          summary.stat=("n"))
+```
+<br> 
+
+***
+
+##### 5.4 Results
+
+If my assumption on the relevance of the additional variable holds I expect to see either decreases and/or changes in the level of statistical significance for the interaction term estimates. 
+
+**Presidential and midterm:**
+
+For presidential and midterm elections the matching also on the % share of Black or African American citizens in a county does not result in any dramatical changes of the coefficients. Furthermore, interestingly so, the effect of the interaction term is strengthened for these two elections. While shifting to a vote center resulted in a 1 percentage point (statistically insignificant) increase in turnout for presidential elections in table 3, it now results in an increase of 2 percentage points- yet still statistically insignificant. For midterm elections the effect of the interaction term on turnout was also a marginal 1 percentage point increase (for post- votecenter implementation) in the original propensity score matched model. This effect increased to almost 4 percentage point in table 4. All of these estimates regarding presidential and midterm elections were and remain insignificant. Nevertheless, as - oddly- the estimates increase in the new model, this could possibly hint towards a mediation effect of perc_black on the DD-interaction term. This would again be in line with my theory which assumes that the effect of vote centers (and the potentially included closure of polling sites) could be conditional on the level of diversity in a county. 
+
+For presidential and midterm election turnout the single estimates of perc_black are marginal and non-significant.
+
+**Constitutional:**
+
+Contrary to the findings for the presidential and midterm election the new model results in a strong change (both in terms of magnitude and significance) for the effect of the interaction term on turnout in constitutional elections. While in table 3 the implementation of vote centers resulted in a 10 percetage point statistically significant (at the 99% CI level) increase in turnout, this positive effect has diminished to 3 percentage points in table 4. The estimate is furthermore not statistically significant anymore. On the other hand, a one unit increase in the % share of Black or African American citizens in a county results in a statistically highly significant decrease of 0.2 percentage points in turnout. While this may seem marginal it can result in a difference of almost 4 percentage points in turnout for instance when comparing county "Crosby" (% of black or afro american = 3.89) and "Dallas" (23.48%). This, along with the finding that the interaction term effect diminishes after the inclusion and balancing on perc_black yields confidence to my initial assumption that the effect of vote centers is not equal for all group of voters. All in all this again hints towards a mediation effect of perc_black on the DD-predictor. 
+
+
+**Other:**
+
+Hereby, I'd like to briefly note, that matching on perc_black decreases the magnitude (and partially the significance) of the effect on education and population size on turnout. This hints towards omitted variable bias (OVB) in table 3. Furthermore, the fact that total population affects turnout less than in table 3 and -except for presidential elections- statistically insignificantly, could imply that the composition of a county's population is indeed more relevant than its size.
+
+
+**Conclusion:**
+
+Overall these findings suggest the need for both theoretical and methodological research into the relevance of a county's racial diversity within the vote center research. While my investigation was only brief and exploratory, its results  hinted towards a possible mediation effect of the share of Black or African American citizens on the mechanism as postulated by Cortina and Rottinghaus. Furthermore, my perc_black variable only captured the % share of Black or African Americans in a county but did not include Latinxs. As the Guardian assumed especially Latinxs to be affected differently than others by the closing of polling sites, future research should aim to include the share of Latinxs as well. In the best case a diversity concept, measuring how homogenous or diverse a county's constituency is, should be included theoretically and operationalized along the aforementioned terms.
+As Cortina and Rottinghaus conclude "the impacts on voting may be non-uniform and may positively affect turnout in locations or elections where turnout is somewhat likely or counties are smaller (where voters are likely more homogenous)." 
+
+***
+
+
+### 6. References
+
+Cortina, Jeronimo B. & Brandon Rottinghaus (2019). Vote Centers and turnout by election type in Texas. *Research & Politics* https://doi.org/10.1177/2053168019864224
+
+Hlavac, Marek (2018). stargazer: Well-Formatted Regression and Summary Statistics Tables.
+
+Richard Salame (2020). Texas closes hundreds of polling sites, making it harder for minorities to vote. *The Guardian* https://www.theguardian.com/us-news/2020/mar/02/texas-polling-sites-closures-voting 
+
+U.S. Census Bureau. County Population Estimates by Age, Sex, Race and Hispanic Origin: April 1, 2010 to July 1, 2018.
+Data year: 2018 https://txcip.org/tac/census/morecountyinfo.php?MORE=1016
+
+
+
+<br>
