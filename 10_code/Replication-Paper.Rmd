@@ -123,6 +123,7 @@ vars.label =  c( "Vote center (I=yes/0=no)", "Time(P) (I=2016/0=2012)", "Time(P)
 
 ```{r star, results = 'asis', warning=FALSE, message=FALSE}
 library(stargazer, quietly = TRUE)
+setwdsetwd("/Users/charlottekaiser/Desktop/uni/Hertie School/studies/Spring 2020/Stats II/MPP-Replication-Paper/20_results")
   ###1.3.2 Output
 stargazer(reg_pres_t1, reg_midterm_t1, reg_constit_t1, 
           title="Table I. Differential impact of vote center on elections.", 
